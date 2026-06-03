@@ -6,6 +6,8 @@
 ## 项目简介
 小丸工具箱粉丝致敬版是基于 Python Tkinter + FFmpeg 的本地多功能媒体处理工具，覆盖视频压缩、音频处理、封装转换、反挤压、字幕封装、LUT 预览、MediaInfo 分析、批量任务与 Benchmark。
 
+当前 `feature/macos-support` 分支为 macOS 适配分支，优先面向 macOS 使用场景维护，已补充 Apple VideoToolbox 编码、Finder/系统播放器调用、macOS 配置目录与界面行为兼容处理。
+
 ## 当前版本
 - `v1.1.1`
 
@@ -114,4 +116,3 @@ python 视频高性能压缩器.py
 ## 说明
 - 不同硬件编码器是否可用，取决于本机 FFmpeg 编译能力与驱动支持。
 - 若硬编失败，可切换 `CPU H.264 / AVC (libx264)` 进行兜底。
-

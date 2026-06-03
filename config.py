@@ -1,4 +1,5 @@
-﻿from pathlib import Path
+﻿import platform
+from pathlib import Path
 
 
 APP_TITLE = "小丸工具箱粉丝致敬版"
@@ -6,7 +7,22 @@ WINDOW_SIZE = "1320x820"
 
 BUILD_VERSION = "1.1.1"
 WINDOW_MIN_SIZE = (1120, 700)
-DEFAULT_OUTPUT_DIR = Path.cwd() / "output"
+APP_DIR = Path(__file__).resolve().parent
+
+
+def _platform_default_output_dir():
+    system = platform.system()
+    home = Path.home()
+    if system == "Windows":
+        return Path("D:/maru-output")
+    if system == "Darwin":
+        movies_dir = home / "Movies"
+        return (movies_dir if movies_dir.exists() else home) / "maru-output"
+    videos_dir = home / "Videos"
+    return (videos_dir if videos_dir.exists() else home) / "maru-output"
+
+
+DEFAULT_OUTPUT_DIR = _platform_default_output_dir()
 DEFAULT_PREVIEW_PATH = DEFAULT_OUTPUT_DIR / "_lut_preview.png"
 
 VIDEO_EXTENSIONS = {
@@ -54,6 +70,8 @@ ENCODERS = {
     "Intel H.265 10-bit / HEVC Main10": "hevc_qsv_10bit",
     "Intel H.264 / AVC (h264_qsv)": "h264_qsv",
     "Intel AV1 (av1_qsv, Arc+)": "av1_qsv",
+    "Apple H.265 / HEVC (hevc_videotoolbox)": "hevc_videotoolbox",
+    "Apple H.264 / AVC (h264_videotoolbox)": "h264_videotoolbox",
     "CPU H.265 / HEVC (libx265)": "libx265",
     "CPU H.265 10-bit / HEVC Main10": "libx265_10bit",
     "CPU H.264 / AVC (libx264)": "libx264",
@@ -66,9 +84,11 @@ COMMON_ENCODERS = [
     "GPU H.265 / HEVC (hevc_nvenc)",
     "AMD H.265 / HEVC (hevc_amf, RDNA2/RDNA3)",
     "Intel H.265 / HEVC (hevc_qsv)",
+    "Apple H.265 / HEVC (hevc_videotoolbox)",
     "GPU H.264 / AVC (h264_nvenc)",
     "AMD H.264 / AVC (h264_amf, RDNA2/RDNA3)",
     "Intel H.264 / AVC (h264_qsv)",
+    "Apple H.264 / AVC (h264_videotoolbox)",
     "CPU H.264 / AVC (libx264)",
 ]
 
@@ -85,6 +105,8 @@ ENCODER_FILENAME_TAGS = {
     "hevc_qsv_10bit": "intel_h265_10bit",
     "h264_qsv": "intel_h264",
     "av1_qsv": "intel_av1",
+    "hevc_videotoolbox": "apple_h265",
+    "h264_videotoolbox": "apple_h264",
     "libx265": "h265",
     "libx265_10bit": "h265_10bit",
     "libx264": "h264",

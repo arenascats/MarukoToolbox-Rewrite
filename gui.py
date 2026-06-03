@@ -36,6 +36,7 @@ from tkinter import (
 
 import ffmpeg_utils as ffmpeg
 from config import (
+    APP_DIR,
     APP_TITLE,
     BUILD_VERSION,
     AUDIO_ENCODERS,
@@ -174,12 +175,15 @@ class VideoCompressorApp:
     def __init__(self, root):
         self.COLORS = dict(self.LIGHT_COLORS)
         self.root = root
+        self.base_dir = APP_DIR
         self.app_version = f"v{BUILD_VERSION}"
         self.display_title = f"{APP_TITLE}    {self.app_version}"
         self.root.title(self.display_title)
         self.root.geometry(WINDOW_SIZE)
         self.root.minsize(*WINDOW_MIN_SIZE)
-        self.icon_path = Path.cwd() / "gzya5-3b5gl-001.ico"
+        self.icon_bitmap_path = self.base_dir / "gzya5-3b5gl-001.ico"
+        self.icon_image_path = self.base_dir / "logo.png"
+        self.window_icon_image = None
         self._set_window_icon(self.root)
 
         self.files = []
@@ -207,7 +211,7 @@ class VideoCompressorApp:
         self.stop_requested = False
         self.messages = queue.Queue()
 
-        self.encoder_name = StringVar(value="GPU H.265 / HEVC (hevc_nvenc)")
+        self.encoder_name = StringVar(value=self._initial_video_encoder_name())
         self.advanced_encoders = BooleanVar(value=False)
         self.preferred_device = StringVar(value="优先 GPU")
         self.auto_open_output = BooleanVar(value=False)
@@ -646,13 +650,73 @@ class VideoCompressorApp:
             arrowcolor=[("readonly", colors["accent"])],
         )
 
+    def _is_macos(self):
+        return platform.system() == "Darwin"
+
+    def _command_creationflags(self):
+        return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+    def _guide_enabled(self):
+        return not self._is_macos()
+
+    def _initial_video_encoder_name(self):
+        if self._is_macos():
+            return "Apple H.265 / HEVC (hevc_videotoolbox)"
+        return "GPU H.265 / HEVC (hevc_nvenc)"
+
+    def _hardware_encoder_candidates(self):
+        candidates = []
+        info = self.runtime_environment
+        if self._is_macos():
+            if info is None or info.has_videotoolbox:
+                candidates.extend([
+                    "Apple H.265 / HEVC (hevc_videotoolbox)",
+                    "Apple H.264 / AVC (h264_videotoolbox)",
+                ])
+        if info is None or info.has_nvenc:
+            candidates.extend([
+                "GPU H.265 / HEVC (hevc_nvenc)",
+                "GPU H.264 / AVC (h264_nvenc)",
+            ])
+        if info is None or info.has_amf:
+            candidates.extend([
+                "AMD H.265 / HEVC (hevc_amf, RDNA2/RDNA3)",
+                "AMD H.264 / AVC (h264_amf, RDNA2/RDNA3)",
+            ])
+        if info is None or info.has_qsv:
+            candidates.extend([
+                "Intel H.265 / HEVC (hevc_qsv)",
+                "Intel H.264 / AVC (h264_qsv)",
+            ])
+        return [name for name in candidates if name in ENCODERS]
+
+    def _preferred_video_encoder_name(self, prefer_gpu=True):
+        if not prefer_gpu:
+            return "CPU H.264 / AVC (libx264)"
+        visible = set(self._encoder_choices()) if hasattr(self, "advanced_encoders") else set()
+        for candidate in self._hardware_encoder_candidates():
+            if not visible or candidate in visible:
+                return candidate
+        return "CPU H.264 / AVC (libx264)"
+
+    def _resolve_platform_encoder(self, encoder_name):
+        if encoder_name in ENCODERS and self._encoder_visible(encoder_name):
+            return encoder_name
+        return self._preferred_video_encoder_name(prefer_gpu=True)
+
     def _set_window_icon(self, window):
-        if not self.icon_path.exists():
-            return
-        try:
-            window.iconbitmap(str(self.icon_path))
-        except Exception:
-            pass
+        if self.icon_image_path.exists():
+            try:
+                self.window_icon_image = PhotoImage(file=str(self.icon_image_path))
+                window.iconphoto(True, self.window_icon_image)
+                return
+            except Exception:
+                self.window_icon_image = None
+        if self.icon_bitmap_path.exists():
+            try:
+                window.iconbitmap(str(self.icon_bitmap_path))
+            except Exception:
+                pass
 
     def _set_window_geometry(self, window, geometry, center=True):
         if center:
@@ -791,13 +855,14 @@ class VideoCompressorApp:
             header_actions.columnconfigure(column, weight=1)
         header_buttons = [
             ("settings", "⚙ 设置", self.open_settings_window, ""),
-            ("guide", "新手向导", self.start_first_run_guide, ""),
             ("start", "▶ 开始压缩", self.start_compression, "Accent.TButton"),
             ("queue", "＋ 视频任务入队", self.add_current_video_to_queue, ""),
             ("stop", "■ 停止", self.stop, ""),
             ("check_env", "✓ 检测环境", self.check_environment, ""),
             ("github", "GitHub Issues", self.open_github_project, ""),
         ]
+        if self._guide_enabled():
+            header_buttons.insert(1, ("guide", "新手向导", self.start_first_run_guide, ""))
         for column, (button_id, text, command, style) in enumerate(header_buttons):
             options = {"text": text, "command": command}
             if style:
@@ -1552,14 +1617,23 @@ class VideoCompressorApp:
 
     def _encoder_visible(self, encoder_name):
         encoder_key = ENCODERS.get(encoder_name, "")
+        info = self.runtime_environment
         if not encoder_key:
             return True
         if "nvenc" in encoder_key:
-            return bool(self.detected_has_nvidia)
+            supported = bool(info.has_nvenc) if info is not None else True
+            hardware_ready = self.detected_has_nvidia if self.detected_gpu_names else True
+            return supported and hardware_ready
         if encoder_key.endswith("_amf"):
-            return bool(self.detected_has_amd)
+            supported = bool(info.has_amf) if info is not None else True
+            hardware_ready = self.detected_has_amd if self.detected_gpu_names else True
+            return supported and hardware_ready
         if encoder_key.endswith("_qsv"):
-            return bool(self.detected_has_intel)
+            supported = bool(info.has_qsv) if info is not None else True
+            hardware_ready = self.detected_has_intel if self.detected_gpu_names else True
+            return supported and hardware_ready
+        if encoder_key.endswith("_videotoolbox"):
+            return bool(info.has_videotoolbox) if info is not None else self._is_macos()
         return True
 
     def _filtered_encoder_list(self, encoders):
@@ -2041,6 +2115,9 @@ class VideoCompressorApp:
                 pass
 
     def _maybe_start_first_run_guide(self):
+        if not self._guide_enabled():
+            self.first_run_guide_completed = True
+            return
         if self.first_run_guide_completed:
             return
         if not messagebox.askyesno("首次使用向导", "检测到你是首次使用，是否开始新手向导？\n\n向导会高亮按钮并分 4 步带你走完流程。"):
@@ -2048,6 +2125,8 @@ class VideoCompressorApp:
         self.start_first_run_guide(mark_completed=True)
 
     def start_first_run_guide(self, mark_completed=True):
+        if not self._guide_enabled():
+            return
         if self._guide_window and self._guide_window.winfo_exists():
             self._guide_window.lift()
             return
@@ -2259,12 +2338,17 @@ class VideoCompressorApp:
         return self._app_data_root_path() / "app_settings.json"
 
     def _default_output_dir(self, subdir=""):
-        base = Path("D:/maru-output")
+        base = DEFAULT_OUTPUT_DIR
         return base / subdir if subdir else base
 
     def _app_data_root_path(self):
-        appdata = os.environ.get("APPDATA", "")
-        base = Path(appdata) if appdata else (Path.home() / "AppData" / "Roaming")
+        if os.name == "nt":
+            appdata = os.environ.get("APPDATA", "")
+            base = Path(appdata) if appdata else (Path.home() / "AppData" / "Roaming")
+        elif self._is_macos():
+            base = Path.home() / "Library" / "Application Support"
+        else:
+            base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
         return base / "marurebuild"
 
     def _preset_storage_dir(self):
@@ -2383,7 +2467,7 @@ class VideoCompressorApp:
         presets = {}
         for name, item in BATCH_PRESETS.items():
             presets[name] = {
-                "encoder_name": item["encoder"],
+                "encoder_name": self._resolve_platform_encoder(item["encoder"]),
                 "resolution_name": item["resolution"],
                 "cq_value": item["cq"],
                 "audio_mode": item["audio"],
@@ -2532,7 +2616,7 @@ class VideoCompressorApp:
         ttk.Label(features, text="预览播放器").grid(row=0, column=0, sticky="w", pady=5)
         ttk.Entry(features, textvariable=self.default_player).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=5)
         ttk.Button(features, text="选择…", command=self.choose_default_player).grid(row=0, column=2, pady=5)
-        ttk.Label(features, text="为空时调用 Windows 默认播放器。", style="Hint.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        ttk.Label(features, text="为空时调用系统默认播放器。", style="Hint.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 0))
         ttk.Checkbutton(features, text="高级模式显示所有编码器和进阶参数", variable=self.advanced_encoders, command=self.refresh_encoder_choices).grid(row=2, column=0, columnspan=3, sticky="w", pady=5)
         ttk.Checkbutton(features, text="启用文件拖入（需要 tkinterdnd2 支持）", variable=self.enable_drag_drop, command=self._setup_drag_drop).grid(row=3, column=0, columnspan=3, sticky="w", pady=5)
         ttk.Checkbutton(features, text="覆盖前提醒", variable=self.confirm_overwrite).grid(row=4, column=0, columnspan=3, sticky="w", pady=5)
@@ -2605,10 +2689,7 @@ class VideoCompressorApp:
         return json.dumps(self.user_video_presets, ensure_ascii=False, sort_keys=True)
 
     def _apply_preferred_encoder(self):
-        if self.preferred_device.get() == "优先 CPU":
-            self.encoder_name.set("CPU H.264 / AVC (libx264)")
-        else:
-            self.encoder_name.set("GPU H.265 / HEVC (hevc_nvenc)")
+        self.encoder_name.set(self._preferred_video_encoder_name(prefer_gpu=self.preferred_device.get() != "优先 CPU"))
         self.refresh_encoder_choices()
 
     def _apply_app_settings(self):
@@ -2644,7 +2725,14 @@ class VideoCompressorApp:
             self.tab_order_list.insert(END, name)
 
     def choose_default_player(self):
-        path = filedialog.askopenfilename(title="选择预览播放器", filetypes=[("程序", "*.exe"), ("所有文件", "*.*")])
+        if self._is_macos():
+            path = filedialog.askdirectory(title="选择预览播放器（请选择 .app 应用）")
+            if path and not path.lower().endswith(".app"):
+                messagebox.showwarning("选择无效", "macOS 请直接选择播放器的 .app 应用。")
+                return
+        else:
+            filetypes = [("程序", "*.exe"), ("所有文件", "*.*")] if os.name == "nt" else [("所有文件", "*.*")]
+            path = filedialog.askopenfilename(title="选择预览播放器", filetypes=filetypes)
         if path:
             self.default_player.set(path)
 
@@ -2825,7 +2913,7 @@ class VideoCompressorApp:
     def _load_app_settings(self):
         source_path = self.settings_path
         if not source_path.exists():
-            legacy_path = Path.cwd() / "data" / "app_settings.json"
+            legacy_path = self.base_dir / "data" / "app_settings.json"
             if legacy_path.exists():
                 source_path = legacy_path
             else:
@@ -2838,6 +2926,8 @@ class VideoCompressorApp:
         data = self._normalize_loaded_settings_data(data)
         self.theme_mode.set("黑暗模式" if data.get("theme_mode") == "黑暗模式" else "日间模式")
         self.first_run_guide_completed = bool(data.get("first_run_guide_completed", False))
+        if not self._guide_enabled():
+            self.first_run_guide_completed = True
         mapping = {
             "interface_language": self.interface_language,
             "interface_size": self.interface_size,
@@ -3083,14 +3173,23 @@ class VideoCompressorApp:
             messagebox.showwarning("没有视频", "请先添加视频，最好在列表中选中一个要预览的视频。")
             return
         try:
-            if os.name == "nt":
-                player = self.default_player.get().strip()
-                if player:
-                    subprocess.Popen([player, str(Path(source))], creationflags=subprocess.CREATE_NO_WINDOW)
+            source_path = Path(source)
+            player = self.default_player.get().strip()
+            if player:
+                if self._is_macos():
+                    player_path = Path(player).expanduser()
+                    if player.lower().endswith(".app") or player_path.is_dir() or ("/" not in player and not player_path.exists()):
+                        subprocess.Popen(["open", "-a", player, str(source_path)])
+                    else:
+                        subprocess.Popen([str(player_path), str(source_path)])
                 else:
-                    os.startfile(str(Path(source)))
+                    subprocess.Popen([player, str(source_path)], creationflags=self._command_creationflags())
+            elif os.name == "nt":
+                os.startfile(str(source_path))
+            elif self._is_macos():
+                subprocess.Popen(["open", str(source_path)])
             else:
-                messagebox.showinfo("播放预览", "当前仅实现 Windows 默认播放器调用。")
+                subprocess.Popen(["xdg-open", str(source_path)])
         except Exception as exc:
             messagebox.showerror("播放失败", f"无法调用系统播放器：{exc}")
         return
@@ -4381,6 +4480,7 @@ class VideoCompressorApp:
         nvidia_encoders = self._filtered_encoder_list([name for name, key in ENCODERS.items() if "nvenc" in key])
         amd_encoders = self._filtered_encoder_list([name for name, key in ENCODERS.items() if key.endswith("_amf")])
         intel_encoders = self._filtered_encoder_list([name for name, key in ENCODERS.items() if key.endswith("_qsv")])
+        apple_encoders = self._filtered_encoder_list([name for name, key in ENCODERS.items() if key.endswith("_videotoolbox")])
 
         def apply_encoder_group(candidates):
             for var in encoder_vars.values():
@@ -4394,6 +4494,7 @@ class VideoCompressorApp:
         ttk.Button(preset_row, text="N卡常用", command=lambda: apply_encoder_group(nvidia_encoders)).pack(side="left")
         ttk.Button(preset_row, text="A卡常用", command=lambda: apply_encoder_group(amd_encoders)).pack(side="left", padx=(6, 0))
         ttk.Button(preset_row, text="I卡常用", command=lambda: apply_encoder_group(intel_encoders)).pack(side="left", padx=(6, 0))
+        ttk.Button(preset_row, text="Apple 常用", command=lambda: apply_encoder_group(apple_encoders)).pack(side="left", padx=(6, 0))
         ttk.Button(preset_row, text="全选", command=lambda: [var.set(True) for var in encoder_vars.values()]).pack(side="left", padx=(14, 0))
         ttk.Button(preset_row, text="清除", command=lambda: [var.set(False) for var in encoder_vars.values()]).pack(side="left", padx=(6, 0))
 
@@ -4444,7 +4545,12 @@ class VideoCompressorApp:
             info = ffmpeg.detect_environment()
             encoder_text = ffmpeg.run_capture([info.ffmpeg, "-hide_banner", "-encoders"]).lower() if info.ffmpeg else ""
             system_lines = self._system_profile_lines()
-            gpu_names = self._windows_cim_list("Win32_VideoController", "Name") if os.name == "nt" else []
+            if os.name == "nt":
+                gpu_names = self._windows_cim_list("Win32_VideoController", "Name")
+            elif self._is_macos():
+                gpu_names = self._mac_gpu_names()
+            else:
+                gpu_names = []
             self.messages.put(("environment_update", (info, encoder_text, system_lines, gpu_names)))
         except Exception as exc:
             self.messages.put(("environment_update", (None, "", [f"检测失败：{exc}"], [])))
@@ -4470,6 +4576,7 @@ class VideoCompressorApp:
                 f"NVENC 编码器: {'可用' if info.has_nvenc else '未检测到'}",
                 f"AMF 编码器: {'可用' if info.has_amf else '未检测到'}",
                 f"Intel QSV 编码器: {'可用' if info.has_qsv else '未检测到'}",
+                f"Apple VideoToolbox: {'可用' if info.has_videotoolbox else '未检测到'}",
                 f"检测到显卡: {gpu_summary}",
                 "",
                 "电脑配置检查",
@@ -4494,9 +4601,16 @@ class VideoCompressorApp:
         version_text = platform.version()
         arch = platform.machine() or "未知"
         logical_cores = os.cpu_count() or 0
-        cpu_name = self._windows_cim_first("Win32_Processor", "Name") if os.name == "nt" else platform.processor()
+        if os.name == "nt":
+            cpu_name = self._windows_cim_first("Win32_Processor", "Name")
+            gpu_names = self._windows_cim_list("Win32_VideoController", "Name")
+        elif self._is_macos():
+            cpu_name = self._mac_cpu_name()
+            gpu_names = self._mac_gpu_names()
+        else:
+            cpu_name = platform.processor()
+            gpu_names = []
         cpu_name = cpu_name or "未知"
-        gpu_names = self._windows_cim_list("Win32_VideoController", "Name") if os.name == "nt" else []
         memory_gb = self._total_memory_gb()
         lines = [
             f"系统: {os_text}",
@@ -4514,6 +4628,51 @@ class VideoCompressorApp:
         else:
             lines.append("GPU: 未检测到（或系统未返回）")
         return lines
+
+    def _mac_cpu_name(self):
+        values = (
+            self._read_command_lines(["sysctl", "-n", "machdep.cpu.brand_string"], timeout=2),
+            self._read_command_lines(["sysctl", "-n", "hw.model"], timeout=2),
+            self._read_command_lines(["uname", "-m"], timeout=2),
+        )
+        for lines in values:
+            if lines:
+                return lines[0]
+        return platform.processor() or "Apple Silicon / Intel Mac"
+
+    def _mac_gpu_names(self):
+        lines = self._read_command_lines(["system_profiler", "SPDisplaysDataType", "-json"], timeout=6)
+        if not lines:
+            return []
+        try:
+            payload = json.loads("\n".join(lines))
+        except Exception:
+            return []
+        results = []
+        for item in payload.get("SPDisplaysDataType", []):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("sppci_model") or item.get("_name") or "").strip()
+            if name:
+                results.append(name)
+        return results
+
+    def _read_command_lines(self, command, timeout=4):
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=self._command_creationflags(),
+                timeout=timeout,
+            )
+        except Exception:
+            return []
+        if result.returncode != 0:
+            return []
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
     def _total_memory_gb(self):
         if os.name == "nt":
@@ -4536,6 +4695,12 @@ class VideoCompressorApp:
                     return status.ullTotalPhys / (1024 ** 3)
             except Exception:
                 return 0.0
+        try:
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            page_count = os.sysconf("SC_PHYS_PAGES")
+            return (page_size * page_count) / (1024 ** 3)
+        except Exception:
+            pass
         return 0.0
 
     def _windows_cim_first(self, class_name, property_name):
@@ -4550,14 +4715,13 @@ class VideoCompressorApp:
             f"Get-CimInstance {class_name} | Select-Object -ExpandProperty {property_name}",
         ]
         try:
-            creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                creationflags=creationflags,
+                creationflags=self._command_creationflags(),
                 timeout=4,
             )
         except Exception:
@@ -4789,7 +4953,7 @@ class VideoCompressorApp:
         self._start_worker("LUT 预览", self._lut_preview_worker, Path(source))
 
     def start_benchmark(self):
-        sample = Path.cwd() / "test.mp4"
+        sample = self.base_dir / "test.mp4"
         if not sample.exists():
             messagebox.showwarning("缺少样本", f"未找到内置样本：{sample}")
             return
@@ -5112,8 +5276,14 @@ class VideoCompressorApp:
 
     def _schedule_shutdown(self):
         try:
-            self._log("任务全部完成，已执行关机指令：30 秒后自动关机。")
-            subprocess.Popen(["shutdown", "/s", "/t", "30"], creationflags=subprocess.CREATE_NO_WINDOW)
+            if os.name == "nt":
+                self._log("任务全部完成，已执行关机指令：30 秒后自动关机。")
+                subprocess.Popen(["shutdown", "/s", "/t", "30"], creationflags=self._command_creationflags())
+            elif self._is_macos():
+                self._log("任务全部完成，已请求 macOS 关机。若系统拦截，请检查自动化权限。")
+                subprocess.Popen(["osascript", "-e", 'tell application "System Events" to shut down'])
+            else:
+                self._log("当前系统未实现自动关机。")
         except Exception as exc:
             self._log(f"执行关机失败：{exc}")
 
@@ -5206,7 +5376,7 @@ class VideoCompressorApp:
             if self.x264_threads.get() > 0:
                 x264_args += ["-threads", str(self.x264_threads.get())]
             if self.x264_command.get().strip():
-                x264_args += shlex.split(self.x264_command.get().strip(), posix=False)
+                x264_args += shlex.split(self.x264_command.get().strip(), posix=os.name != "nt")
             if x264_args:
                 extra_args = " ".join([extra_args.strip(), *x264_args]).strip()
         return CompressionSettings(
@@ -5966,6 +6136,10 @@ class VideoCompressorApp:
             cmd += ["-preset", "p5", "-rc", "vbr", "-cq", "23", "-b:v", "0"]
         elif resolved_encoder.endswith("_amf"):
             cmd += ["-quality", "balanced", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23", "-qp_b", "23"]
+        elif resolved_encoder.endswith("_videotoolbox"):
+            cmd += ["-q:v", ffmpeg.videotoolbox_quality_value(23)]
+            if resolved_encoder.startswith("hevc_") and Path(target).suffix.lower() in {".mov", ".mp4", ".m4v"}:
+                cmd += ["-tag:v", "hvc1"]
         elif resolved_encoder == "prores_ks":
             cmd += ["-profile:v", "3"]
         elif resolved_encoder == "libsvtav1":
@@ -6129,7 +6303,7 @@ class VideoCompressorApp:
             }
             resolution_name = vertical_map.get(resolution_name, resolution_name)
         return CompressionSettings(
-            encoder_key=preset["encoder"],
+            encoder_key=self._resolve_platform_encoder(preset["encoder"]),
             preset_name=self.preset_name.get(),
             resolution_name=resolution_name,
             sharpen_name=self.sharpen_name.get(),
@@ -6214,7 +6388,7 @@ class VideoCompressorApp:
         if show_job_window:
             self.messages.put(("job_log", (job_id, command_text)))
         try:
-            creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            creationflags = self._command_creationflags()
             if os.name == "nt" and "libx264" in [str(part) for part in cmd]:
                 priority_flags = {"低": 0x00004000, "高": 0x00000080}
                 creationflags |= priority_flags.get(self.x264_priority.get(), 0)
@@ -6398,7 +6572,11 @@ class VideoCompressorApp:
     def _open_folder(self, folder):
         try:
             if os.name == "nt":
-                subprocess.Popen(["explorer", str(folder)], creationflags=subprocess.CREATE_NO_WINDOW)
+                subprocess.Popen(["explorer", str(folder)], creationflags=self._command_creationflags())
+            elif self._is_macos():
+                subprocess.Popen(["open", str(folder)])
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])
         except Exception as exc:
             self.messages.put(("log", f"打开输出目录失败：{exc}"))
 
@@ -6458,6 +6636,18 @@ class VideoCompressorApp:
 
     def _cpu_usage_percent(self):
         if os.name != "nt":
+            if self._is_macos():
+                lines = self._read_command_lines(["ps", "-A", "-o", "%cpu"], timeout=2)
+                values = []
+                for line in lines:
+                    try:
+                        values.append(float(line))
+                    except Exception:
+                        continue
+                if not values:
+                    return None
+                cores = max(os.cpu_count() or 1, 1)
+                return max(0, min(100, sum(values) / cores))
             return None
 
         class FileTime(ctypes.Structure):
@@ -6520,7 +6710,7 @@ class VideoCompressorApp:
                     encoding="utf-8",
                     errors="replace",
                     timeout=1,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    creationflags=self._command_creationflags(),
                 )
                 values = [float(value) for value in re.findall(r"[-+]?\d+(?:\.\d+)?", output)]
                 if values:
@@ -6611,7 +6801,7 @@ class VideoCompressorApp:
             self._restore_video_defaults_prompt_open = False
 
     def _restore_video_compression_defaults(self):
-        self.encoder_name.set("GPU H.265 / HEVC (hevc_nvenc)")
+        self.encoder_name.set(self._preferred_video_encoder_name(prefer_gpu=True))
         self.advanced_encoders.set(False)
         self.preset_name.set("高速")
         self.resolution_name.set("保持原分辨率")
@@ -7209,9 +7399,3 @@ def run_app():
         crash_log = Path.cwd() / "crash.log"
         crash_log.write_text(traceback.format_exc(), encoding="utf-8")
         raise
-
-
-
-
-
-

@@ -36,6 +36,7 @@ class EnvironmentInfo:
     has_nvenc: bool
     has_amf: bool
     has_qsv: bool
+    has_videotoolbox: bool = False
 
 
 @dataclass(frozen=True)

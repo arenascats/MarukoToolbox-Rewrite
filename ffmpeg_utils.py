@@ -21,6 +21,7 @@ def detect_environment() -> EnvironmentInfo:
         has_nvenc="nvenc" in encoder_text,
         has_amf="_amf" in encoder_text,
         has_qsv="_qsv" in encoder_text,
+        has_videotoolbox="_videotoolbox" in encoder_text,
     )
 
 
@@ -28,12 +29,13 @@ def build_compress_command(source: Path, target: Path, settings: CompressionSett
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     if settings.quality_mode == "自定义命令" and settings.custom_command.strip():
         command = settings.custom_command.replace("{input}", str(source)).replace("{output}", str(target))
-        return [ffmpeg] + shlex.split(command, posix=True)
+        return [ffmpeg] + split_command_args(command)
     encoder_key = encoder_override or ENCODERS[settings.encoder_key]
     encoder, pix_fmt = resolve_encoder(encoder_key)
     is_nvenc = "nvenc" in encoder
     is_amf = encoder.endswith("_amf")
     is_qsv = encoder.endswith("_qsv")
+    is_videotoolbox = encoder.endswith("_videotoolbox")
     preset_gpu, preset_cpu = PRESETS[settings.preset_name]
     cq = str(settings.cq_value)
     bitrate = settings.bitrate.strip()
@@ -71,6 +73,13 @@ def build_compress_command(source: Path, target: Path, settings: CompressionSett
             cmd += ["-b:v", bitrate]
         else:
             cmd += ["-global_quality", cq]
+    elif is_videotoolbox:
+        if bitrate:
+            cmd += ["-b:v", bitrate]
+        else:
+            cmd += ["-q:v", videotoolbox_quality_value(settings.cq_value)]
+        if encoder.startswith("hevc_") and target.suffix.lower() in {".mov", ".mp4", ".m4v"}:
+            cmd += ["-tag:v", "hvc1"]
     else:
         if encoder == "libsvtav1":
             cmd += ["-preset", "6", "-crf", cq]
@@ -87,7 +96,7 @@ def build_compress_command(source: Path, target: Path, settings: CompressionSett
         cmd += ["-pix_fmt", pix_fmt]
     cmd += audio_args(settings)
     if settings.extra_ffmpeg_args.strip():
-        cmd += settings.extra_ffmpeg_args.strip().split()
+        cmd += split_command_args(settings.extra_ffmpeg_args.strip())
     if watermark_payload:
         cmd += ["-metadata", f"comment={watermark_payload}", "-metadata", f"description={watermark_payload}"]
     cmd += ["-map_metadata", "0", str(target)]
@@ -404,6 +413,23 @@ def resolve_encoder(encoder_key: str):
     if encoder_key == "libx265_10bit":
         return "libx265", "yuv420p10le"
     return encoder_key, ""
+
+
+def split_command_args(text: str):
+    if not text:
+        return []
+    try:
+        return shlex.split(text, posix=os.name != "nt")
+    except Exception:
+        return text.split()
+
+
+def videotoolbox_quality_value(cq_value):
+    try:
+        cq = int(cq_value)
+    except Exception:
+        cq = 23
+    return str(max(1, min(100, 100 - cq)))
 
 
 def video_filters(settings: CompressionSettings, use_gpu_filters: bool):
