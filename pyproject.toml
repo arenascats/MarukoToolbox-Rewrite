@@ -3,7 +3,7 @@ name = "marukotoolbox-rewrite"
 version = "0.1.0"
 description = "小丸工具箱粉丝致敬版 — 视频高性能压缩工具 (Rewrite)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
