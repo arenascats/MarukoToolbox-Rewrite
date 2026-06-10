@@ -81,9 +81,8 @@
 ## 配置与数据目录
 程序运行后会在以下目录保存配置和用户数据：
 
-```text
-%APPDATA%\marurebuild
-```
+- **Windows**: `%APPDATA%\marurebuild`
+- **macOS**: `~/AppData/Roaming/marurebuild`（尚未适配 macOS 标准路径，后续将迁移至 `~/Library/Application Support/marurebuild`）
 
 主要包含：
 - `app_settings.json`（全局设置）
@@ -91,17 +90,40 @@
 - 运行相关配置文件
 
 ## 运行要求
+
+### Windows
 - Windows 10/11
-- Python 3.10+
+- Python 3.12+
 - FFmpeg / ffprobe 可用（已加入 PATH，或放在程序可访问路径）
 
+### macOS
+- macOS 12+
+- Python 3.12+ (推荐通过 [Homebrew](https://brew.sh) 安装)
+- Tcl/Tk 支持 (`brew install python-tk@3.14`，解决 `ModuleNotFoundError: No module named '_tkinter'`)
+- FFmpeg / ffprobe（`brew install ffmpeg`）
+
 ## 启动方式
+
+### 直接运行
 ```bash
 python main.py
 ```
 或：
 ```bash
 python 视频高性能压缩器.py
+```
+
+### uv 一键运行（推荐）
+```bash
+# 安装 uv（若未安装）
+brew install uv          # macOS
+# 或: pip install uv
+
+# 同步依赖并启动
+uv sync
+uv run maruko-toolbox
+# 或:
+uv run python main.py
 ```
 
 ## 项目结构（核心文件）
