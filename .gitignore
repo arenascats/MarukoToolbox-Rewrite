@@ -8,6 +8,9 @@ venv/
 env/
 ENV/
 
+# uv
+.python-version
+
 # Build artifacts
 build/
 dist/

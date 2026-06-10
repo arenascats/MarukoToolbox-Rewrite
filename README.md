@@ -99,7 +99,7 @@
 ### macOS
 - macOS 12+
 - Python 3.10+ (推荐通过 [Homebrew](https://brew.sh) 安装)
-- Tcl/Tk 支持 (`brew install python-tk@3.10`，版本号需与已安装的 Python 版本匹配)
+- Tcl/Tk 支持 (`brew install python-tk@3.14`，版本号需与已安装的 Python 版本匹配，可用 `python3 --version` 查看)
 - FFmpeg / ffprobe（`brew install ffmpeg`）
 
 ## 启动方式
