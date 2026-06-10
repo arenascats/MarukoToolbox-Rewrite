@@ -32,5 +32,12 @@ htmlcov/
 # IDE / OS files
 .vscode/
 .idea/
+
+# Windows
 Thumbs.db
 Desktop.ini
+
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
