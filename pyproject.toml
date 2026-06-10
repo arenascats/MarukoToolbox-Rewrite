@@ -1,0 +1,23 @@
+[project]
+name = "marukotoolbox-rewrite"
+version = "0.1.0"
+description = "小丸工具箱粉丝致敬版 — 视频高性能压缩工具 (Rewrite)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+maruko-toolbox = "main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+only-include = ["*.py", "data/**", "hooks/**"]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.0.0",
+]
